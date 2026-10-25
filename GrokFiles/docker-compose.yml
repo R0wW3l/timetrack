@@ -1,0 +1,14 @@
+version: "3.9"
+services:
+  timetrack:
+    build: .
+    container_name: timetrack
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - ${DATA_FOLDER:-./data}:/data
+    environment:
+      - DATA_FOLDER=/data
+      - PORT=8080
+      - TZ=America/Edmonton

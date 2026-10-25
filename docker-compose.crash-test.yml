@@ -1,0 +1,16 @@
+services:
+  timetrack:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: timetrack-crash-test
+    container_name: timetrack-crash-test
+    restart: unless-stopped
+    ports:
+      - "18080:8080"
+    volumes:
+      - ${DATA_FOLDER}:/data
+    environment:
+      - DATA_FOLDER=/data
+      - PORT=8080
+      - TZ=America/Edmonton

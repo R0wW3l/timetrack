@@ -1,0 +1,19 @@
+{
+  "dataFolder": "/data",
+  "database": {
+    "filename": "timetrack.db",
+    "walCheckpointOnStartup": true
+  },
+  "defaults": {
+    "defaultHourlyWageCad": 45.0,
+    "defaultTimezone": "America/Edmonton"
+  },
+  "ui": {
+    "theme": "auto",
+    "dateFormat": "YYYY-MM-DD",
+    "timeFormat": "24h"
+  },
+  "server": {
+    "port": 8080
+  }
+}

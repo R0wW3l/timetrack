@@ -1,0 +1,10 @@
+{
+  "isRunning": true,
+  "startUtc": "2026-09-24T20:00:00.000Z",
+  "tzOffsetMinutes": -360,
+  "projectId": 1,
+  "projectName": "Client A",
+  "taskId": 1,
+  "taskName": "Website redesign",
+  "notesDraft": "working on nav bar responsive fix"
+}
