@@ -83,19 +83,3 @@ docker start timetrack
 ```
 
 After `wal_checkpoint(TRUNCATE)`, the `-wal` and `-shm` files are empty and the `.db` file is the whole database. To restore, stop the app and replace `timetrack.db` with the backup.
-
-## Develop without Docker
-
-```bash
-npm install
-npm start   # uses ~/timetrack-data unless DATA_FOLDER is set
-npm test
-npm run test:docker
-```
-
-## Publish a new image
-
-```bash
-docker buildx build --platform linux/amd64,linux/arm64 \
-  -t rwel/timetrack:<version> -t rwel/timetrack:latest --push .
-```
