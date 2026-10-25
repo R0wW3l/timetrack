@@ -3,14 +3,19 @@
 Base URL: http://localhost:8080/api
 
 ## Projects
-GET    /projects                -> list all projects (id, name, hourlyWageCad, archived)
+GET    /projects                -> list all projects (id, name, hourlyWageCad)
 POST   /projects                -> { name, hourlyWageCad } create new project
 PUT    /projects/:id             -> update name / hourlyWageCad
-DELETE /projects/:id             -> archive (soft delete, do not hard delete if entries reference it)
 
 ## Tasks
-GET    /tasks?projectId=:id      -> list tasks for a project (for autofill dropdown)
+GET    /tasks?projectId=:id      -> list tasks for a project (id, projectId, name, entryCount)
+GET    /tasks                    -> list every task, same shape
 POST   /tasks                    -> { projectId, name } create new task (or return existing if name+projectId already exists)
+DELETE /tasks/:id?entries=delete|keep
+                                 -> delete a task. If it has entries, `entries` is required:
+                                    delete removes them, keep leaves them with the task name stored on the entry.
+                                    409 while the running timer uses the task.
+                                    returns { deletedEntries, keptEntries }
 
 ## Timer (active.json backed)
 GET    /timer                    -> current active timer state, or { isRunning: false }

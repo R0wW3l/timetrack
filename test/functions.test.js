@@ -15,7 +15,53 @@ const {
 const { atomicWriteJson } = require('../src/atomic');
 const { readConfig, writeConfig } = require('../src/configStore');
 const { streamPdf } = require('../src/pdf');
+const { openDatabase } = require('../src/db');
 const { tempDataFolder } = require('./helpers');
+const Database = require('better-sqlite3');
+
+test('opening an older database adds task_name and unarchives projects', () => {
+  const folder = tempDataFolder();
+  try {
+    const old = new Database(path.join(folder, 'timetrack.db'));
+    old.exec(`
+      CREATE TABLE projects (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL UNIQUE,
+        hourly_wage_cad REAL NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+        archived INTEGER NOT NULL DEFAULT 0
+      );
+      CREATE TABLE entries (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE RESTRICT,
+        task_id INTEGER,
+        start_utc TEXT NOT NULL,
+        finish_utc TEXT NOT NULL,
+        tz_offset_minutes INTEGER NOT NULL DEFAULT 0,
+        duration_seconds INTEGER NOT NULL,
+        amount_cad REAL NOT NULL DEFAULT 0,
+        amount_overridden INTEGER NOT NULL DEFAULT 0,
+        notes TEXT DEFAULT '',
+        overlap_acknowledged INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+        updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+        CHECK (finish_utc > start_utc)
+      );
+      INSERT INTO projects (name, archived) VALUES ('Old job', 1);
+    `);
+    old.close();
+
+    const db = openDatabase(folder);
+    const columns = db.prepare('PRAGMA table_info(entries)').all().map((column) => column.name);
+    assert.ok(columns.includes('task_name'));
+    assert.equal(db.prepare("SELECT archived FROM projects WHERE name = 'Old job'").get().archived, 0);
+    db.close();
+    const reopened = openDatabase(folder);
+    reopened.close();
+  } finally {
+    fs.rmSync(folder, { recursive: true, force: true });
+  }
+});
 
 test('time helpers normalize, format, and reject bad dates', () => {
   assert.equal(normalizeUtc('2026-09-24T06:00:00Z'), '2026-09-24T06:00:00.000Z');

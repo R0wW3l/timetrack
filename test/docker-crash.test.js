@@ -263,8 +263,6 @@ test('docker kill restarts the container and keeps every feature', { timeout: 60
     });
     assert.equal(renamed.status, 200);
     assert.equal(renamed.data.hourlyWageCad, 11);
-    const archived = await api('DELETE', `/api/projects/${priced.data.id}`);
-    assert.equal(archived.data.archived, true);
     const extraTask = await api('POST', '/api/tasks', { projectId: extra.data.id, name: 'Later' });
     assert.equal(extraTask.status, 201);
     const manual = await api('POST', '/api/entries', {
@@ -278,6 +276,8 @@ test('docker kill restarts the container and keeps every feature', { timeout: 60
     assert.equal(manual.status, 201);
     const removed = await api('DELETE', `/api/entries/${manual.data.entry.id}`);
     assert.equal(removed.status, 204);
+    const droppedTask = await api('DELETE', `/api/tasks/${extraTask.data.id}`);
+    assert.equal(droppedTask.status, 200);
     const report = await fetch(`${base}/api/reports/pdf`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

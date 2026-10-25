@@ -32,6 +32,7 @@ window.addEventListener('hashchange', () => {
   state.showEntryForm = false;
   state.editing = null;
   state.openFilter = null;
+  state.pendingTaskDelete = null;
   boot();
 });
 
@@ -98,9 +99,13 @@ document.addEventListener('click', async (event) => {
       state.showEntryForm = false;
       render();
     } else if (action === 'delete-entry') await removeEntry(Number(button.dataset.id));
-    else if (action === 'archive-project') await setArchived(Number(button.dataset.id), true);
-    else if (action === 'restore-project') await setArchived(Number(button.dataset.id), false);
-    else if (action === 'save-project') await saveProject(button.dataset.id);
+    else if (action === 'delete-task') await deleteTask(Number(button.dataset.id), Number(button.dataset.projectId));
+    else if (action === 'confirm-delete-task') await removeTask(state.pendingTaskDelete, button.dataset.mode);
+    else if (action === 'cancel-delete-task') {
+      const projectId = state.pendingTaskDelete?.projectId;
+      state.pendingTaskDelete = null;
+      refreshTaskSlot(projectId);
+    } else if (action === 'save-project') await saveProject(button.dataset.id);
     else if (action === 'clear-filter') await clearFilter(button.dataset.kind);
   } catch (error) {
     state.error = error.message;
@@ -178,6 +183,7 @@ async function boot() {
   }
   if (state.route === 'entries' || state.route === 'report') {
     state.allTasks = await api('/tasks');
+    state.filters.taskIds = state.filters.taskIds.filter((id) => state.allTasks.some((task) => task.id === id));
     await loadEntries();
   } else {
     render();
@@ -204,7 +210,6 @@ function render() {
 }
 
 function renderTrack() {
-  const activeProjects = state.projects.filter((project) => !project.archived);
   if (!state.timer.isRunning) {
     return `
       <h1>Track</h1>
@@ -212,7 +217,7 @@ function renderTrack() {
       ${alertHtml()}
       <section class="card stack">
         <form id="start-form" class="stack">
-          ${projectTaskFields(activeProjects, state.trackTasks || [])}
+          ${projectTaskFields(state.projects, state.trackTasks || [])}
           <label><span>Notes</span><textarea name="notesDraft">${esc(state.notesDraft || '')}</textarea></label>
           <div><button type="submit">Start</button></div>
         </form>
@@ -285,8 +290,6 @@ function renderReport() {
 
 function renderSettings() {
   const config = state.config;
-  const active = state.projects.filter((project) => !project.archived);
-  const archived = state.projects.filter((project) => project.archived);
   return `
     <h1>Settings</h1>
     <p class="lede">Wage, appearance, projects, and tasks stay on this machine.</p>
@@ -315,16 +318,7 @@ function renderSettings() {
         <label class="grow"><span>Hourly wage (CAD)</span><input name="hourlyWageCad" type="number" min="0" step="0.01" value="${config.defaults.defaultHourlyWageCad}" required></label>
         <button type="submit">Add project</button>
       </form>
-      ${active.map(projectEditor).join('') || '<p class="muted">No active projects yet.</p>'}
-    </section>
-    <section class="card stack">
-      <h2>Archived</h2>
-      ${archived.length ? archived.map((project) => `
-        <div class="row">
-          <div class="grow"><strong>${esc(project.name)}</strong><div class="muted">${Number(project.hourlyWageCad).toFixed(2)} CAD/h</div></div>
-          <button type="button" data-action="restore-project" data-id="${project.id}">Restore</button>
-        </div>
-      `).join('') : '<p class="muted">No archived projects.</p>'}
+      ${state.projects.map(projectEditor).join('') || '<p class="muted">No projects yet.</p>'}
     </section>
   `;
 }
@@ -336,7 +330,6 @@ function projectEditor(project) {
         <label class="grow"><span>Name</span><input id="project-name-${project.id}" value="${esc(project.name)}"></label>
         <label class="grow"><span>Hourly wage (CAD)</span><input id="project-wage-${project.id}" type="number" min="0" step="0.01" value="${project.hourlyWageCad}"></label>
         <button type="button" data-action="save-project" data-id="${project.id}">Save</button>
-        <button type="button" class="danger" data-action="archive-project" data-id="${project.id}">Archive</button>
       </div>
       <form id="task-form" class="row" data-project-id="${project.id}">
         <label class="grow"><span>New task</span><input name="name" required></label>
@@ -349,7 +342,25 @@ function projectEditor(project) {
 
 function taskChips(projectId) {
   if (state.taskCache && state.taskCache[projectId]) {
-    return state.taskCache[projectId].map((task) => `<span class="chip">${esc(task.name)}</span>`).join('') || '<span class="muted">No tasks yet.</span>';
+    const chips = state.taskCache[projectId].map((task) => `
+      <span class="chip">
+        ${esc(task.name)}
+        <button type="button" class="chip-delete" data-action="delete-task" data-id="${task.id}" data-project-id="${projectId}" title="Delete task" aria-label="Delete task ${esc(task.name)}">&times;</button>
+      </span>
+    `).join('') || '<span class="muted">No tasks yet.</span>';
+    const pending = state.pendingTaskDelete;
+    if (!pending || pending.projectId !== projectId) return chips;
+    const count = `${pending.entryCount} entr${pending.entryCount === 1 ? 'y' : 'ies'}`;
+    return `${chips}
+      <div class="banner stack task-confirm">
+        <span>"${esc(pending.name)}" has ${count}. Delete them too, or keep them? Kept entries still show this project and task name.</span>
+        <div class="row">
+          <button type="button" class="danger" data-action="confirm-delete-task" data-mode="delete">Delete task and ${count}</button>
+          <button type="button" class="ghost" data-action="confirm-delete-task" data-mode="keep">Delete task, keep entries</button>
+          <button type="button" class="ghost" data-action="cancel-delete-task">Cancel</button>
+        </div>
+      </div>
+    `;
   }
   return '<span class="muted">Loading tasks…</span>';
 }
@@ -388,7 +399,7 @@ function filterControls() {
             ${state.projects.map((project) => filterOption(
               'projectIds',
               project.id,
-              `${esc(project.name)}${project.archived ? ' <span>(archived)</span>' : ''}`,
+              esc(project.name),
               selectedProjects.has(project.id)
             )).join('') || '<p class="muted">No projects yet.</p>'}
             <div><button type="button" class="ghost" data-action="clear-filter" data-kind="projectIds">Clear</button></div>
@@ -451,7 +462,7 @@ function findByName(items, name) {
 }
 
 async function loadTrackTasks() {
-  const project = findByName(state.projects.filter((item) => !item.archived), state.projectName);
+  const project = findByName(state.projects, state.projectName);
   const projectId = project ? project.id : null;
   if (projectId === state.trackTasksProjectId) return false;
   state.trackTasksProjectId = projectId;
@@ -463,7 +474,7 @@ async function loadTrackTasks() {
 
 function entryFormHtml() {
   const entry = state.editing;
-  const projects = state.projects.filter((project) => !project.archived || project.id === entry.projectId);
+  const projects = state.projects;
   const tasks = (state.tasks || []).filter((task) => task.projectId === entry.projectId);
   const partsStart = entry.startUtc ? localParts(entry.startUtc, entry.tzOffsetMinutes) : null;
   const partsFinish = entry.finishUtc ? localParts(entry.finishUtc, entry.tzOffsetMinutes) : null;
@@ -476,6 +487,7 @@ function entryFormHtml() {
       </label>
       <label><span>Task</span>
         <select name="taskId" required>
+          ${entry.id && !entry.taskId ? `<option value="" selected>${esc(entry.taskName || 'Task')} (deleted), pick a task</option>` : ''}
           ${tasks.map((task) => `<option value="${task.id}" ${task.id === entry.taskId ? 'selected' : ''}>${esc(task.name)}</option>`).join('')}
         </select>
       </label>
@@ -534,10 +546,8 @@ async function startTimer(form) {
   if (!state.projectName || !state.taskName) throw new Error('Pick or type a project and a task.');
   clearTimeout(notesTimer);
   const added = [];
-  let project = findByName(state.projects.filter((item) => !item.archived), state.projectName);
+  let project = findByName(state.projects, state.projectName);
   if (!project) {
-    const archived = findByName(state.projects.filter((item) => item.archived), state.projectName);
-    if (archived) throw new Error(`${archived.name} is archived. Restore it in Settings to track time on it.`);
     project = await api('/projects', { method: 'POST', body: { name: state.projectName } });
     added.push(`project "${project.name}"`);
     state.projects = await api('/projects');
@@ -724,12 +734,11 @@ async function createProject(form) {
 }
 
 async function saveProject(id) {
-  const project = state.projects.find((item) => item.id === Number(id));
   const name = document.getElementById(`project-name-${id}`).value;
   const hourlyWageCad = Number(document.getElementById(`project-wage-${id}`).value);
   await api(`/projects/${id}`, {
     method: 'PUT',
-    body: { name, hourlyWageCad, archived: project.archived },
+    body: { name, hourlyWageCad },
   });
   state.projects = await api('/projects');
   state.notice = 'Project saved.';
@@ -737,20 +746,38 @@ async function saveProject(id) {
   await hydrateTaskChips();
 }
 
-async function setArchived(id, archived) {
-  const project = state.projects.find((item) => item.id === id);
-  if (archived) {
-    await api(`/projects/${id}`, { method: 'DELETE' });
-  } else {
-    await api(`/projects/${id}`, {
-      method: 'PUT',
-      body: { name: project.name, hourlyWageCad: project.hourlyWageCad, archived: false },
-    });
+async function deleteTask(id, projectId) {
+  const task = (state.taskCache?.[projectId] || []).find((item) => item.id === id);
+  if (!task) return;
+  state.notice = '';
+  state.error = '';
+  if (task.entryCount > 0) {
+    const previous = state.pendingTaskDelete?.projectId;
+    state.pendingTaskDelete = task;
+    if (previous && previous !== projectId) refreshTaskSlot(previous);
+    refreshTaskSlot(projectId);
+    return;
   }
-  state.projects = await api('/projects');
-  state.notice = archived ? 'Project archived.' : 'Project restored.';
+  if (!confirm(`Delete task "${task.name}"?`)) return;
+  await removeTask(task);
+}
+
+async function removeTask(task, mode) {
+  if (!task) return;
+  const query = mode ? `?entries=${mode}` : '';
+  const result = await api(`/tasks/${task.id}${query}`, { method: 'DELETE' });
+  state.pendingTaskDelete = null;
+  const plural = (n) => `${n} entr${n === 1 ? 'y' : 'ies'}`;
+  if (result.deletedEntries) state.notice = `Task "${task.name}" and ${plural(result.deletedEntries)} deleted.`;
+  else if (result.keptEntries) state.notice = `Task "${task.name}" deleted. ${plural(result.keptEntries)} kept.`;
+  else state.notice = `Task "${task.name}" deleted.`;
   render();
   await hydrateTaskChips();
+}
+
+function refreshTaskSlot(projectId) {
+  const slot = document.getElementById(`tasks-${projectId}`);
+  if (slot) slot.innerHTML = taskChips(projectId);
 }
 
 async function createTask(form) {
@@ -771,15 +798,14 @@ async function loadTasks(projectId) {
 async function hydrateTaskChips() {
   if (state.route !== 'settings') return;
   state.taskCache = {};
-  await Promise.all(state.projects.filter((project) => !project.archived).map(async (project) => {
+  await Promise.all(state.projects.map(async (project) => {
     state.taskCache[project.id] = await api(`/tasks?projectId=${project.id}`);
-    const slot = document.getElementById(`tasks-${project.id}`);
-    if (slot) slot.innerHTML = taskChips(project.id);
+    refreshTaskSlot(project.id);
   }));
 }
 
 function blankEntry() {
-  const project = state.projects.find((item) => !item.archived);
+  const project = state.projects[0];
   return {
     projectId: project ? project.id : null,
     taskId: null,

@@ -7,7 +7,7 @@ const ENTRY_SELECT = `
     e.project_id,
     p.name AS project_name,
     e.task_id,
-    t.name AS task_name,
+    COALESCE(t.name, e.task_name) AS task_name,
     e.start_utc,
     e.finish_utc,
     e.tz_offset_minutes,
@@ -28,16 +28,17 @@ function mapProject(row) {
     id: row.id,
     name: row.name,
     hourlyWageCad: row.hourly_wage_cad,
-    archived: row.archived === 1,
   };
 }
 
 function mapTask(row) {
-  return {
+  const task = {
     id: row.id,
     projectId: row.project_id,
     name: row.name,
   };
+  if (row.entry_count != null) task.entryCount = row.entry_count;
+  return task;
 }
 
 function mapEntry(row) {
@@ -84,16 +85,15 @@ function parseOffset(value) {
 function loadProject(db, projectId) {
   if (!Number.isInteger(projectId)) throw new HttpError(400, 'projectId is required');
   const project = db.prepare(`
-    SELECT id, name, hourly_wage_cad AS hourlyWageCad, archived
+    SELECT id, name, hourly_wage_cad AS hourlyWageCad
     FROM projects WHERE id = ?
   `).get(projectId);
   if (!project) throw new HttpError(400, 'Project not found');
   return project;
 }
 
-function assertProjectTask(db, projectId, taskId, { allowArchived = false } = {}) {
+function assertProjectTask(db, projectId, taskId) {
   const project = loadProject(db, projectId);
-  if (!allowArchived && project.archived) throw new HttpError(400, 'Project is archived');
   if (!Number.isInteger(taskId)) throw new HttpError(400, 'taskId is required');
   const task = db.prepare('SELECT id, name, project_id FROM tasks WHERE id = ?').get(taskId);
   if (!task) throw new HttpError(400, 'Task not found');
@@ -113,7 +113,7 @@ function resolveAmount({ seconds, wage, amountCad, amountOverridden, treatAmount
 }
 
 function buildEntryFields(db, body, options = {}) {
-  const { project } = assertProjectTask(db, body.projectId, body.taskId, options);
+  const { project } = assertProjectTask(db, body.projectId, body.taskId);
   const startUtc = normalizeUtc(body.startUtc);
   const finishUtc = normalizeUtc(body.finishUtc);
   if (finishUtc <= startUtc) throw new HttpError(400, 'finishUtc must be after startUtc');
@@ -173,11 +173,9 @@ function createEntry(db, body, options) {
 }
 
 function updateEntry(db, id, body) {
-  const existing = db.prepare('SELECT id, project_id FROM entries WHERE id = ?').get(id);
+  const existing = db.prepare('SELECT id FROM entries WHERE id = ?').get(id);
   if (!existing) throw new HttpError(404, 'Entry not found');
-  const fields = buildEntryFields(db, body, {
-    allowArchived: body.projectId === existing.project_id,
-  });
+  const fields = buildEntryFields(db, body);
   const overlappingEntryIds = findOverlaps(db, fields.startUtc, fields.finishUtc, id);
   db.prepare(`
     UPDATE entries SET

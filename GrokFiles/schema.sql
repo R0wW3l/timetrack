@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS entries (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE RESTRICT,
     task_id INTEGER REFERENCES tasks(id) ON DELETE SET NULL,
+    task_name TEXT,
     start_utc TEXT NOT NULL,
     finish_utc TEXT NOT NULL,
     tz_offset_minutes INTEGER NOT NULL DEFAULT 0,

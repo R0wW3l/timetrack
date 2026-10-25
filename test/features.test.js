@@ -19,14 +19,14 @@ after(async () => {
   fs.rmSync(dataFolder, { recursive: true, force: true });
 });
 
-test('projects use the default wage, reject duplicates, and archive', async () => {
+test('projects use the default wage and reject duplicates', async () => {
   const seeded = await request('GET', '/api/config');
   assert.equal(seeded.data.defaults.defaultHourlyWageCad, 45);
 
   const defaults = await request('POST', '/api/projects', { name: 'alpha' });
   assert.equal(defaults.status, 201);
   assert.equal(defaults.data.hourlyWageCad, 45);
-  assert.equal(defaults.data.archived, false);
+  assert.equal('archived' in defaults.data, false);
 
   const priced = await request('POST', '/api/projects', { name: 'Beta', hourlyWageCad: 80 });
   assert.equal(priced.status, 201);
@@ -50,21 +50,18 @@ test('projects use the default wage, reject duplicates, and archive', async () =
   assert.equal(updated.status, 200);
   assert.equal(updated.data.hourlyWageCad, 81);
 
-  const archived = await request('DELETE', `/api/projects/${defaults.data.id}`);
-  assert.equal(archived.status, 200);
-  assert.equal(archived.data.archived, true);
-  const afterArchive = await request('GET', '/api/projects');
-  assert.deepEqual(afterArchive.data.map((project) => project.name), ['Beta', 'alpha']);
+  const noArchive = await request('DELETE', `/api/projects/${defaults.data.id}`);
+  assert.equal(noArchive.status, 404);
+  const ignored = await request('PUT', `/api/projects/${defaults.data.id}`, { archived: true });
+  assert.equal(ignored.status, 200);
+  assert.equal('archived' in ignored.data, false);
+  const afterIgnored = await request('GET', '/api/projects');
+  assert.deepEqual(afterIgnored.data.map((project) => project.name), ['alpha', 'Beta']);
 
-  const missing = await request('DELETE', '/api/projects/99999');
-  assert.equal(missing.status, 404);
   const badId = await request('PUT', '/api/projects/abc', { name: 'x', hourlyWageCad: 1 });
   assert.equal(badId.status, 400);
   const zeroId = await request('GET', '/api/projects/0');
   assert.equal(zeroId.status, 404);
-
-  const restored = await request('PUT', `/api/projects/${defaults.data.id}`, { archived: false });
-  assert.equal(restored.data.archived, false);
 });
 
 test('tasks dedupe by name and stay on their project', async () => {
@@ -95,23 +92,87 @@ test('tasks dedupe by name and stay on their project', async () => {
     notes: 'wrong task',
   });
   assert.equal(foreign.status, 400);
+});
 
-  await request('DELETE', `/api/projects/${project.data.id}`);
-  const blocked = await request('POST', '/api/entries', {
-    projectId: project.data.id,
-    taskId: created.data.id,
-    startUtc: '2026-07-02T15:00:00.000Z',
-    finishUtc: '2026-07-02T16:00:00.000Z',
+test('deleting a task can delete or keep its entries', async () => {
+  const project = await request('POST', '/api/projects', { name: 'Cleanup', hourlyWageCad: 60 });
+  const projectId = project.data.id;
+  const keep = await request('POST', '/api/tasks', { projectId, name: 'Keep me' });
+  const drop = await request('POST', '/api/tasks', { projectId, name: 'Drop me' });
+  const empty = await request('POST', '/api/tasks', { projectId, name: 'Empty' });
+
+  async function add(task, hour) {
+    const created = await request('POST', '/api/entries', {
+      projectId,
+      taskId: task.data.id,
+      startUtc: `2026-04-10T${hour}:00:00.000Z`,
+      finishUtc: `2026-04-10T${hour + 1}:00:00.000Z`,
+      tzOffsetMinutes: -360,
+    });
+    assert.equal(created.status, 201);
+  }
+  await add(keep, 14);
+  await add(keep, 15);
+  await add(drop, 16);
+
+  const listed = await request('GET', `/api/tasks?projectId=${projectId}`);
+  assert.deepEqual(listed.data.map((task) => [task.name, task.entryCount]), [
+    ['Drop me', 1],
+    ['Empty', 0],
+    ['Keep me', 2],
+  ]);
+
+  const emptyGone = await request('DELETE', `/api/tasks/${empty.data.id}`);
+  assert.equal(emptyGone.status, 200);
+  assert.deepEqual(emptyGone.data, { deletedEntries: 0, keptEntries: 0 });
+
+  const needsChoice = await request('DELETE', `/api/tasks/${keep.data.id}`);
+  assert.equal(needsChoice.status, 409);
+  const badMode = await request('DELETE', `/api/tasks/${keep.data.id}?entries=maybe`);
+  assert.equal(badMode.status, 400);
+
+  const kept = await request('DELETE', `/api/tasks/${keep.data.id}?entries=keep`);
+  assert.equal(kept.status, 200);
+  assert.deepEqual(kept.data, { deletedEntries: 0, keptEntries: 2 });
+  const dropped = await request('DELETE', `/api/tasks/${drop.data.id}?entries=delete`);
+  assert.equal(dropped.status, 200);
+  assert.deepEqual(dropped.data, { deletedEntries: 1, keptEntries: 0 });
+
+  const day = await request('GET', '/api/entries?from=2026-04-10&to=2026-04-10');
+  assert.equal(day.data.entries.length, 2);
+  for (const entry of day.data.entries) {
+    assert.equal(entry.projectName, 'Cleanup');
+    assert.equal(entry.taskName, 'Keep me');
+    assert.equal(entry.taskId, null);
+  }
+  assert.equal(day.data.totalAmountCad, 120);
+  assert.deepEqual((await request('GET', `/api/tasks?projectId=${projectId}`)).data, []);
+  assert.equal((await request('DELETE', `/api/tasks/${keep.data.id}`)).status, 404);
+
+  const again = await request('POST', '/api/tasks', { projectId, name: 'Keep me' });
+  assert.equal(again.status, 201);
+  const edited = await request('PUT', `/api/entries/${day.data.entries[0].id}`, {
+    projectId,
+    taskId: again.data.id,
+    startUtc: day.data.entries[0].startUtc,
+    finishUtc: day.data.entries[0].finishUtc,
     tzOffsetMinutes: -360,
   });
-  assert.equal(blocked.status, 400);
-  const timerBlocked = await request('POST', '/api/timer/start', {
-    projectId: project.data.id,
-    taskId: created.data.id,
+  assert.equal(edited.status, 200);
+  assert.equal(edited.data.entry.taskId, again.data.id);
+
+  const busy = await request('POST', '/api/tasks', { projectId, name: 'Busy' });
+  const started = await request('POST', '/api/timer/start', {
+    projectId,
+    taskId: busy.data.id,
     notesDraft: '',
     tzOffsetMinutes: -360,
   });
-  assert.equal(timerBlocked.status, 400);
+  assert.equal(started.status, 201);
+  const running = await request('DELETE', `/api/tasks/${busy.data.id}?entries=delete`);
+  assert.equal(running.status, 409);
+  const stopped = await request('POST', '/api/timer/stop', { notes: '' });
+  assert.equal(stopped.status, 200);
 });
 
 test('timer notes, stop amount, override, and overlap', async () => {

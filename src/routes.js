@@ -51,9 +51,9 @@ function createRouter(db, dataFolder) {
 
   router.get('/projects', asyncRoute((req, res) => {
     const rows = db.prepare(`
-      SELECT id, name, hourly_wage_cad, archived
+      SELECT id, name, hourly_wage_cad
       FROM projects
-      ORDER BY archived ASC, name COLLATE NOCASE ASC
+      ORDER BY name COLLATE NOCASE ASC
     `).all();
     res.json(rows.map(mapProject));
   }));
@@ -66,7 +66,7 @@ function createRouter(db, dataFolder) {
       : requireWage(req.body.hourlyWageCad);
     try {
       const info = db.prepare('INSERT INTO projects (name, hourly_wage_cad) VALUES (?, ?)').run(name, wage);
-      const row = db.prepare('SELECT id, name, hourly_wage_cad, archived FROM projects WHERE id = ?').get(info.lastInsertRowid);
+      const row = db.prepare('SELECT id, name, hourly_wage_cad FROM projects WHERE id = ?').get(info.lastInsertRowid);
       res.status(201).json(mapProject(row));
     } catch (error) {
       if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') {
@@ -78,38 +78,31 @@ function createRouter(db, dataFolder) {
 
   router.put('/projects/:id', asyncRoute((req, res) => {
     const id = parseId(req.params.id);
-    const existing = db.prepare('SELECT id, name, hourly_wage_cad, archived FROM projects WHERE id = ?').get(id);
+    const existing = db.prepare('SELECT id, name, hourly_wage_cad FROM projects WHERE id = ?').get(id);
     if (!existing) throw new HttpError(404, 'Project not found');
     const name = req.body?.name == null ? existing.name : requireName(req.body.name, 'name');
     const wage = req.body?.hourlyWageCad == null ? existing.hourly_wage_cad : requireWage(req.body.hourlyWageCad);
-    const archived = req.body?.archived == null ? existing.archived : (req.body.archived ? 1 : 0);
     try {
-      db.prepare('UPDATE projects SET name = ?, hourly_wage_cad = ?, archived = ? WHERE id = ?').run(name, wage, archived, id);
+      db.prepare('UPDATE projects SET name = ?, hourly_wage_cad = ? WHERE id = ?').run(name, wage, id);
     } catch (error) {
       if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') {
         throw new HttpError(409, 'A project with that name already exists');
       }
       throw error;
     }
-    const row = db.prepare('SELECT id, name, hourly_wage_cad, archived FROM projects WHERE id = ?').get(id);
+    const row = db.prepare('SELECT id, name, hourly_wage_cad FROM projects WHERE id = ?').get(id);
     res.json(mapProject(row));
   }));
 
-  router.delete('/projects/:id', asyncRoute((req, res) => {
-    const id = parseId(req.params.id);
-    const existing = db.prepare('SELECT id FROM projects WHERE id = ?').get(id);
-    if (!existing) throw new HttpError(404, 'Project not found');
-    db.prepare('UPDATE projects SET archived = 1 WHERE id = ?').run(id);
-    const row = db.prepare('SELECT id, name, hourly_wage_cad, archived FROM projects WHERE id = ?').get(id);
-    res.json(mapProject(row));
-  }));
+  const TASK_SELECT = `
+    SELECT t.id, t.project_id, t.name,
+      (SELECT COUNT(*) FROM entries e WHERE e.task_id = t.id) AS entry_count
+    FROM tasks t
+  `;
 
   router.get('/tasks', asyncRoute((req, res) => {
     if (req.query.projectId === undefined) {
-      const rows = db.prepare(`
-        SELECT id, project_id, name FROM tasks
-        ORDER BY name COLLATE NOCASE ASC
-      `).all();
+      const rows = db.prepare(`${TASK_SELECT} ORDER BY t.name COLLATE NOCASE ASC`).all();
       res.json(rows.map(mapTask));
       return;
     }
@@ -117,11 +110,41 @@ function createRouter(db, dataFolder) {
     if (!Number.isInteger(projectId) || projectId <= 0) throw new HttpError(400, 'projectId is required');
     loadProject(db, projectId);
     const rows = db.prepare(`
-      SELECT id, project_id, name FROM tasks
-      WHERE project_id = ?
-      ORDER BY name COLLATE NOCASE ASC
+      ${TASK_SELECT}
+      WHERE t.project_id = ?
+      ORDER BY t.name COLLATE NOCASE ASC
     `).all(projectId);
     res.json(rows.map(mapTask));
+  }));
+
+  router.delete('/tasks/:id', asyncRoute((req, res) => {
+    const id = parseId(req.params.id);
+    const mode = req.query.entries;
+    if (mode !== undefined && mode !== 'delete' && mode !== 'keep') {
+      throw new HttpError(400, 'entries must be delete or keep');
+    }
+    const task = db.prepare('SELECT id, name FROM tasks WHERE id = ?').get(id);
+    if (!task) throw new HttpError(404, 'Task not found');
+    const active = readActive(dataFolder);
+    if (active.isRunning && active.taskId === id) {
+      throw new HttpError(409, 'Stop the running timer before deleting its task');
+    }
+    const result = db.transaction(() => {
+      const { count } = db.prepare('SELECT COUNT(*) AS count FROM entries WHERE task_id = ?').get(id);
+      if (count > 0 && mode === undefined) {
+        throw new HttpError(409, `This task has ${count} entr${count === 1 ? 'y' : 'ies'}. Choose whether to delete or keep them.`);
+      }
+      let deletedEntries = 0;
+      let keptEntries = 0;
+      if (count > 0 && mode === 'delete') {
+        deletedEntries = db.prepare('DELETE FROM entries WHERE task_id = ?').run(id).changes;
+      } else if (count > 0) {
+        keptEntries = db.prepare('UPDATE entries SET task_name = ? WHERE task_id = ?').run(task.name, id).changes;
+      }
+      db.prepare('DELETE FROM tasks WHERE id = ?').run(id);
+      return { deletedEntries, keptEntries };
+    })();
+    res.json(result);
   }));
 
   router.post('/tasks', asyncRoute((req, res) => {
@@ -187,7 +210,6 @@ function createRouter(db, dataFolder) {
     };
     const result = db.transaction(() => createEntry(db, payload, {
       treatAmountAsOverride: true,
-      allowArchived: true,
     }))();
     clearActive(dataFolder);
     res.json(result);

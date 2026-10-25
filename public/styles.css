@@ -204,12 +204,24 @@ th { color: var(--muted); font-weight: 550; font-size: 0.85rem; }
 
 .tasks { display: flex; gap: 8px; flex-wrap: wrap; }
 .chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   border: 1px solid var(--line);
   border-radius: 999px;
-  padding: 4px 10px;
+  padding: 4px 4px 4px 10px;
   color: var(--muted);
   font-size: 0.9rem;
 }
+.chip-delete {
+  background: transparent;
+  color: var(--muted);
+  padding: 0 6px;
+  line-height: 1.4;
+  font-size: 1rem;
+}
+.chip-delete:hover { color: var(--danger); }
+.task-confirm { flex-basis: 100%; }
 
 .check { display: flex; gap: 8px; align-items: center; }
 .check input { width: auto; accent-color: var(--accent); }

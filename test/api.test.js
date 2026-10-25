@@ -140,19 +140,6 @@ test('timer writes active.json and clears it only after the entry commits', asyn
   assert.deepEqual(idle.data, { isRunning: false });
 });
 
-test('archive and restore a project', async () => {
-  const project = await request('POST', '/api/projects', { name: 'Archive me', hourlyWageCad: 10 });
-  const archived = await request('DELETE', `/api/projects/${project.data.id}`);
-  assert.equal(archived.data.archived, true);
-  const restored = await request('PUT', `/api/projects/${project.data.id}`, {
-    name: 'Archive me',
-    hourlyWageCad: 10,
-    archived: false,
-  });
-  assert.equal(restored.status, 200);
-  assert.equal(restored.data.archived, false);
-});
-
 test('pdf response is a downloadable file', async () => {
   const response = await fetch(`${base}/api/reports/pdf`, {
     method: 'POST',
