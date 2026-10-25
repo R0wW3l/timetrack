@@ -54,7 +54,7 @@ docker compose up -d
 
 - **Track:** type a project or task name. Pick an existing one from the suggestions, or type a new name and press Start to add it. New projects get the default hourly wage, which you can change in Settings.
 - **Entries and Report:** the Projects and Tasks filters each accept several selections. Leave a filter blank to include everything. Tasks are listed under their project and narrow to the projects you select. The PDF header lists the filters that were used.
-- **Settings:** press the × on a task to delete it. If the task has time entries, you choose whether to delete them too or keep them. Kept entries still show their project and task name.
+- **Settings:** press the × on a task, or Delete next to a project's Save button, to delete it. Deleting a project also deletes its tasks. If there are time entries, you choose whether to delete them too or keep them. Kept entries still show their project and task name, and you can move them to another project from Entries.
 
 ## First start
 

@@ -33,6 +33,7 @@ window.addEventListener('hashchange', () => {
   state.editing = null;
   state.openFilter = null;
   state.pendingTaskDelete = null;
+  state.pendingProjectDelete = null;
   boot();
 });
 
@@ -106,7 +107,13 @@ document.addEventListener('click', async (event) => {
       state.pendingTaskDelete = null;
       refreshTaskSlot(projectId);
     } else if (action === 'save-project') await saveProject(button.dataset.id);
-    else if (action === 'clear-filter') await clearFilter(button.dataset.kind);
+    else if (action === 'delete-project') await deleteProject(Number(button.dataset.id));
+    else if (action === 'confirm-delete-project') await removeProject(state.pendingProjectDelete, button.dataset.mode);
+    else if (action === 'cancel-delete-project') {
+      const projectId = state.pendingProjectDelete?.id;
+      state.pendingProjectDelete = null;
+      refreshProjectConfirm(projectId);
+    } else if (action === 'clear-filter') await clearFilter(button.dataset.kind);
   } catch (error) {
     state.error = error.message;
     render();
@@ -183,6 +190,7 @@ async function boot() {
   }
   if (state.route === 'entries' || state.route === 'report') {
     state.allTasks = await api('/tasks');
+    state.filters.projectIds = state.filters.projectIds.filter((id) => state.projects.some((project) => project.id === id));
     state.filters.taskIds = state.filters.taskIds.filter((id) => state.allTasks.some((task) => task.id === id));
     await loadEntries();
   } else {
@@ -330,12 +338,30 @@ function projectEditor(project) {
         <label class="grow"><span>Name</span><input id="project-name-${project.id}" value="${esc(project.name)}"></label>
         <label class="grow"><span>Hourly wage (CAD)</span><input id="project-wage-${project.id}" type="number" min="0" step="0.01" value="${project.hourlyWageCad}"></label>
         <button type="button" data-action="save-project" data-id="${project.id}">Save</button>
+        <button type="button" class="danger" data-action="delete-project" data-id="${project.id}">Delete</button>
       </div>
+      <div class="project-confirm" id="project-confirm-${project.id}">${projectConfirm(project.id)}</div>
       <form id="task-form" class="row" data-project-id="${project.id}">
         <label class="grow"><span>New task</span><input name="name" required></label>
         <button type="submit">Add task</button>
       </form>
       <div class="tasks" id="tasks-${project.id}">${taskChips(project.id)}</div>
+    </div>
+  `;
+}
+
+function projectConfirm(projectId) {
+  const pending = state.pendingProjectDelete;
+  if (!pending || pending.id !== projectId) return '';
+  const count = `${pending.entryCount} entr${pending.entryCount === 1 ? 'y' : 'ies'}`;
+  return `
+    <div class="banner stack">
+      <span>"${esc(pending.name)}" has ${count}. Delete them too, or keep them? Kept entries still show this project and task name. Its tasks are deleted either way.</span>
+      <div class="row">
+        <button type="button" class="danger" data-action="confirm-delete-project" data-mode="delete">Delete project and ${count}</button>
+        <button type="button" class="ghost" data-action="confirm-delete-project" data-mode="keep">Delete project, keep entries</button>
+        <button type="button" class="ghost" data-action="cancel-delete-project">Cancel</button>
+      </div>
     </div>
   `;
 }
@@ -482,6 +508,7 @@ function entryFormHtml() {
     <form id="entry-form" class="stack">
       <label><span>Project</span>
         <select id="entry-project" name="projectId" required>
+          ${entry.id && !entry.projectId ? `<option value="" selected>${esc(entry.projectName || 'Project')} (deleted), pick a project</option>` : ''}
           ${projects.map((project) => `<option value="${project.id}" ${project.id === entry.projectId ? 'selected' : ''}>${esc(project.name)}</option>`).join('')}
         </select>
       </label>
@@ -665,7 +692,7 @@ async function openEdit(id) {
   const entry = state.entries.entries.find((item) => item.id === id);
   state.editing = { ...entry };
   state.showEntryForm = true;
-  state.tasks = await api(`/tasks?projectId=${entry.projectId}`);
+  await loadTasks(entry.projectId);
   render();
 }
 
@@ -744,6 +771,49 @@ async function saveProject(id) {
   state.notice = 'Project saved.';
   render();
   await hydrateTaskChips();
+}
+
+async function deleteProject(id) {
+  state.notice = '';
+  state.error = '';
+  state.projects = await api('/projects');
+  const project = state.projects.find((item) => item.id === id);
+  if (!project) {
+    render();
+    await hydrateTaskChips();
+    return;
+  }
+  if (project.entryCount > 0) {
+    const previous = state.pendingProjectDelete?.id;
+    state.pendingProjectDelete = project;
+    if (previous && previous !== id) refreshProjectConfirm(previous);
+    refreshProjectConfirm(id);
+    return;
+  }
+  const taskCount = state.taskCache?.[id]?.length || 0;
+  const tasks = taskCount ? ` and its ${taskCount} task${taskCount === 1 ? '' : 's'}` : '';
+  if (!confirm(`Delete project "${project.name}"${tasks}?`)) return;
+  await removeProject(project);
+}
+
+async function removeProject(project, mode) {
+  if (!project) return;
+  const query = mode ? `?entries=${mode}` : '';
+  const result = await api(`/projects/${project.id}${query}`, { method: 'DELETE' });
+  state.pendingProjectDelete = null;
+  if (state.pendingTaskDelete?.projectId === project.id) state.pendingTaskDelete = null;
+  const plural = (n) => `${n} entr${n === 1 ? 'y' : 'ies'}`;
+  if (result.deletedEntries) state.notice = `Project "${project.name}" and ${plural(result.deletedEntries)} deleted.`;
+  else if (result.keptEntries) state.notice = `Project "${project.name}" deleted. ${plural(result.keptEntries)} kept.`;
+  else state.notice = `Project "${project.name}" deleted.`;
+  state.projects = await api('/projects');
+  render();
+  await hydrateTaskChips();
+}
+
+function refreshProjectConfirm(projectId) {
+  const slot = document.getElementById(`project-confirm-${projectId}`);
+  if (slot) slot.innerHTML = projectConfirm(projectId);
 }
 
 async function deleteTask(id, projectId) {

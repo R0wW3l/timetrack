@@ -42,6 +42,7 @@ test('projects use the default wage and reject duplicates', async () => {
 
   const listed = await request('GET', '/api/projects');
   assert.deepEqual(listed.data.map((project) => project.name), ['alpha', 'Beta']);
+  assert.deepEqual(listed.data.map((project) => project.entryCount), [0, 0]);
 
   const updated = await request('PUT', `/api/projects/${priced.data.id}`, {
     name: 'Beta',
@@ -50,8 +51,6 @@ test('projects use the default wage and reject duplicates', async () => {
   assert.equal(updated.status, 200);
   assert.equal(updated.data.hourlyWageCad, 81);
 
-  const noArchive = await request('DELETE', `/api/projects/${defaults.data.id}`);
-  assert.equal(noArchive.status, 404);
   const ignored = await request('PUT', `/api/projects/${defaults.data.id}`, { archived: true });
   assert.equal(ignored.status, 200);
   assert.equal('archived' in ignored.data, false);
@@ -173,6 +172,100 @@ test('deleting a task can delete or keep its entries', async () => {
   assert.equal(running.status, 409);
   const stopped = await request('POST', '/api/timer/stop', { notes: '' });
   assert.equal(stopped.status, 200);
+});
+
+test('deleting a project can delete or keep its entries', async () => {
+  async function job(name) {
+    const project = await request('POST', '/api/projects', { name, hourlyWageCad: 30 });
+    const task = await request('POST', '/api/tasks', { projectId: project.data.id, name: `${name} work` });
+    return { projectId: project.data.id, taskId: task.data.id };
+  }
+  async function add({ projectId, taskId }, hour) {
+    const created = await request('POST', '/api/entries', {
+      projectId,
+      taskId,
+      startUtc: `2026-05-20T${hour}:00:00.000Z`,
+      finishUtc: `2026-05-20T${hour + 1}:00:00.000Z`,
+      tzOffsetMinutes: -360,
+    });
+    assert.equal(created.status, 201);
+  }
+  const kept = await job('Old client');
+  const dropped = await job('Spam client');
+  const empty = await job('Empty client');
+  await add(kept, 14);
+  await add(kept, 15);
+  await add(dropped, 16);
+
+  const counts = Object.fromEntries((await request('GET', '/api/projects')).data.map((project) => [project.name, project.entryCount]));
+  assert.equal(counts['Old client'], 2);
+  assert.equal(counts['Spam client'], 1);
+  assert.equal(counts['Empty client'], 0);
+
+  const emptyGone = await request('DELETE', `/api/projects/${empty.projectId}`);
+  assert.equal(emptyGone.status, 200);
+  assert.deepEqual(emptyGone.data, { deletedEntries: 0, keptEntries: 0 });
+  assert.equal((await request('GET', `/api/tasks?projectId=${empty.projectId}`)).status, 400);
+  assert.equal((await request('GET', '/api/tasks')).data.some((task) => task.id === empty.taskId), false);
+
+  const needsChoice = await request('DELETE', `/api/projects/${kept.projectId}`);
+  assert.equal(needsChoice.status, 409);
+  const badMode = await request('DELETE', `/api/projects/${kept.projectId}?entries=maybe`);
+  assert.equal(badMode.status, 400);
+
+  const keptResult = await request('DELETE', `/api/projects/${kept.projectId}?entries=keep`);
+  assert.equal(keptResult.status, 200);
+  assert.deepEqual(keptResult.data, { deletedEntries: 0, keptEntries: 2 });
+  const droppedResult = await request('DELETE', `/api/projects/${dropped.projectId}?entries=delete`);
+  assert.equal(droppedResult.status, 200);
+  assert.deepEqual(droppedResult.data, { deletedEntries: 1, keptEntries: 0 });
+  assert.equal((await request('DELETE', `/api/projects/${kept.projectId}`)).status, 404);
+
+  const names = (await request('GET', '/api/projects')).data.map((project) => project.name);
+  assert.equal(names.includes('Old client'), false);
+  assert.equal(names.includes('Spam client'), false);
+
+  const day = await request('GET', '/api/entries?from=2026-05-20&to=2026-05-20');
+  assert.equal(day.data.entries.length, 2);
+  for (const entry of day.data.entries) {
+    assert.equal(entry.projectId, null);
+    assert.equal(entry.projectName, 'Old client');
+    assert.equal(entry.taskId, null);
+    assert.equal(entry.taskName, 'Old client work');
+  }
+  assert.equal(day.data.totalAmountCad, 60);
+
+  const home = await job('New home');
+  const filtered = await request('GET', `/api/entries?from=2026-05-20&to=2026-05-20&projectIds=${home.projectId}`);
+  assert.equal(filtered.data.entries.length, 0);
+  const moved = await request('PUT', `/api/entries/${day.data.entries[0].id}`, {
+    projectId: home.projectId,
+    taskId: home.taskId,
+    startUtc: day.data.entries[0].startUtc,
+    finishUtc: day.data.entries[0].finishUtc,
+    tzOffsetMinutes: -360,
+  });
+  assert.equal(moved.status, 200);
+  assert.equal(moved.data.entry.projectName, 'New home');
+  assert.equal(moved.data.entry.taskName, 'New home work');
+
+  const reused = await request('POST', '/api/projects', { name: 'Old client' });
+  assert.equal(reused.status, 201);
+
+  const busy = await job('Busy client');
+  const started = await request('POST', '/api/timer/start', {
+    projectId: busy.projectId,
+    taskId: busy.taskId,
+    notesDraft: '',
+    tzOffsetMinutes: -360,
+  });
+  assert.equal(started.status, 201);
+  const running = await request('DELETE', `/api/projects/${busy.projectId}?entries=delete`);
+  assert.equal(running.status, 409);
+  const stopped = await request('POST', '/api/timer/stop', { notes: '' });
+  assert.equal(stopped.status, 200);
+  const afterStop = await request('DELETE', `/api/projects/${busy.projectId}?entries=delete`);
+  assert.deepEqual(afterStop.data, { deletedEntries: 1, keptEntries: 0 });
 });
 
 test('timer notes, stop amount, override, and overlap', async () => {

@@ -19,7 +19,7 @@ const { openDatabase } = require('../src/db');
 const { tempDataFolder } = require('./helpers');
 const Database = require('better-sqlite3');
 
-test('opening an older database adds task_name and unarchives projects', () => {
+test('opening an older database adds task_name, lets entries outlive projects, and unarchives projects', () => {
   const folder = tempDataFolder();
   try {
     const old = new Database(path.join(folder, 'timetrack.db'));
@@ -47,16 +47,34 @@ test('opening an older database adds task_name and unarchives projects', () => {
         updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
         CHECK (finish_utc > start_utc)
       );
+      CREATE INDEX idx_entries_start ON entries(start_utc);
       INSERT INTO projects (name, archived) VALUES ('Old job', 1);
+      INSERT INTO entries (project_id, start_utc, finish_utc, duration_seconds, amount_cad, notes)
+      VALUES (1, '2026-01-05T15:00:00.000Z', '2026-01-05T16:00:00.000Z', 3600, 45, 'kept');
     `);
     old.close();
 
     const db = openDatabase(folder);
-    const columns = db.prepare('PRAGMA table_info(entries)').all().map((column) => column.name);
-    assert.ok(columns.includes('task_name'));
+    const columns = db.prepare('PRAGMA table_info(entries)').all();
+    assert.ok(columns.some((column) => column.name === 'task_name'));
+    assert.ok(columns.some((column) => column.name === 'project_name'));
+    assert.equal(columns.find((column) => column.name === 'project_id').notnull, 0);
+    const projectKey = db.prepare('PRAGMA foreign_key_list(entries)').all().find((key) => key.from === 'project_id');
+    assert.equal(projectKey.on_delete, 'SET NULL');
+    const objects = db.prepare("SELECT name FROM sqlite_master WHERE tbl_name = 'entries' AND type IN ('index', 'trigger')").all().map((row) => row.name);
+    assert.ok(objects.includes('idx_entries_start'));
+    assert.ok(objects.includes('idx_entries_project'));
+    assert.ok(objects.includes('trg_entries_updated_at'));
+    assert.deepEqual(db.prepare('SELECT id, project_id, notes, amount_cad FROM entries').all(), [
+      { id: 1, project_id: 1, notes: 'kept', amount_cad: 45 },
+    ]);
     assert.equal(db.prepare("SELECT archived FROM projects WHERE name = 'Old job'").get().archived, 0);
+    db.prepare("UPDATE entries SET project_name = 'Old job' WHERE project_id = 1").run();
+    db.prepare('DELETE FROM projects WHERE id = 1').run();
+    assert.deepEqual(db.prepare('SELECT project_id, project_name FROM entries').get(), { project_id: null, project_name: 'Old job' });
     db.close();
     const reopened = openDatabase(folder);
+    assert.equal(reopened.prepare('SELECT COUNT(*) AS count FROM entries').get().count, 1);
     reopened.close();
   } finally {
     fs.rmSync(folder, { recursive: true, force: true });

@@ -3,9 +3,15 @@
 Base URL: http://localhost:8080/api
 
 ## Projects
-GET    /projects                -> list all projects (id, name, hourlyWageCad)
+GET    /projects                -> list all projects (id, name, hourlyWageCad, entryCount)
 POST   /projects                -> { name, hourlyWageCad } create new project
 PUT    /projects/:id             -> update name / hourlyWageCad
+DELETE /projects/:id?entries=delete|keep
+                                 -> delete a project and its tasks. If it has entries, `entries` is required:
+                                    delete removes them, keep leaves them with projectId null and the project
+                                    and task names stored on the entry.
+                                    409 while the running timer uses the project.
+                                    returns { deletedEntries, keptEntries }
 
 ## Tasks
 GET    /tasks?projectId=:id      -> list tasks for a project (id, projectId, name, entryCount)

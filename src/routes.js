@@ -46,14 +46,28 @@ function requireWage(value) {
   return value;
 }
 
+function parseEntriesMode(value) {
+  if (value !== undefined && value !== 'delete' && value !== 'keep') {
+    throw new HttpError(400, 'entries must be delete or keep');
+  }
+  return value;
+}
+
+function requireEntriesMode(count, mode, label) {
+  if (count > 0 && mode === undefined) {
+    throw new HttpError(409, `This ${label} has ${count} entr${count === 1 ? 'y' : 'ies'}. Choose whether to delete or keep them.`);
+  }
+}
+
 function createRouter(db, dataFolder) {
   const router = express.Router();
 
   router.get('/projects', asyncRoute((req, res) => {
     const rows = db.prepare(`
-      SELECT id, name, hourly_wage_cad
-      FROM projects
-      ORDER BY name COLLATE NOCASE ASC
+      SELECT p.id, p.name, p.hourly_wage_cad,
+        (SELECT COUNT(*) FROM entries e WHERE e.project_id = p.id) AS entry_count
+      FROM projects p
+      ORDER BY p.name COLLATE NOCASE ASC
     `).all();
     res.json(rows.map(mapProject));
   }));
@@ -94,6 +108,36 @@ function createRouter(db, dataFolder) {
     res.json(mapProject(row));
   }));
 
+  router.delete('/projects/:id', asyncRoute((req, res) => {
+    const id = parseId(req.params.id);
+    const mode = parseEntriesMode(req.query.entries);
+    const project = db.prepare('SELECT id, name FROM projects WHERE id = ?').get(id);
+    if (!project) throw new HttpError(404, 'Project not found');
+    const active = readActive(dataFolder);
+    if (active.isRunning && active.projectId === id) {
+      throw new HttpError(409, 'Stop the running timer before deleting its project');
+    }
+    const result = db.transaction(() => {
+      const { count } = db.prepare('SELECT COUNT(*) AS count FROM entries WHERE project_id = ?').get(id);
+      requireEntriesMode(count, mode, 'project');
+      let deletedEntries = 0;
+      let keptEntries = 0;
+      if (count > 0 && mode === 'delete') {
+        deletedEntries = db.prepare('DELETE FROM entries WHERE project_id = ?').run(id).changes;
+      } else if (count > 0) {
+        keptEntries = db.prepare(`
+          UPDATE entries SET
+            project_name = ?,
+            task_name = COALESCE((SELECT name FROM tasks WHERE tasks.id = entries.task_id), task_name)
+          WHERE project_id = ?
+        `).run(project.name, id).changes;
+      }
+      db.prepare('DELETE FROM projects WHERE id = ?').run(id);
+      return { deletedEntries, keptEntries };
+    })();
+    res.json(result);
+  }));
+
   const TASK_SELECT = `
     SELECT t.id, t.project_id, t.name,
       (SELECT COUNT(*) FROM entries e WHERE e.task_id = t.id) AS entry_count
@@ -119,10 +163,7 @@ function createRouter(db, dataFolder) {
 
   router.delete('/tasks/:id', asyncRoute((req, res) => {
     const id = parseId(req.params.id);
-    const mode = req.query.entries;
-    if (mode !== undefined && mode !== 'delete' && mode !== 'keep') {
-      throw new HttpError(400, 'entries must be delete or keep');
-    }
+    const mode = parseEntriesMode(req.query.entries);
     const task = db.prepare('SELECT id, name FROM tasks WHERE id = ?').get(id);
     if (!task) throw new HttpError(404, 'Task not found');
     const active = readActive(dataFolder);
@@ -131,9 +172,7 @@ function createRouter(db, dataFolder) {
     }
     const result = db.transaction(() => {
       const { count } = db.prepare('SELECT COUNT(*) AS count FROM entries WHERE task_id = ?').get(id);
-      if (count > 0 && mode === undefined) {
-        throw new HttpError(409, `This task has ${count} entr${count === 1 ? 'y' : 'ies'}. Choose whether to delete or keep them.`);
-      }
+      requireEntriesMode(count, mode, 'task');
       let deletedEntries = 0;
       let keptEntries = 0;
       if (count > 0 && mode === 'delete') {

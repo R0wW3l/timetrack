@@ -5,7 +5,7 @@ const ENTRY_SELECT = `
   SELECT
     e.id,
     e.project_id,
-    p.name AS project_name,
+    COALESCE(p.name, e.project_name) AS project_name,
     e.task_id,
     COALESCE(t.name, e.task_name) AS task_name,
     e.start_utc,
@@ -19,16 +19,18 @@ const ENTRY_SELECT = `
     e.created_at,
     e.updated_at
   FROM entries e
-  JOIN projects p ON p.id = e.project_id
+  LEFT JOIN projects p ON p.id = e.project_id
   LEFT JOIN tasks t ON t.id = e.task_id
 `;
 
 function mapProject(row) {
-  return {
+  const project = {
     id: row.id,
     name: row.name,
     hourlyWageCad: row.hourly_wage_cad,
   };
+  if (row.entry_count != null) project.entryCount = row.entry_count;
+  return project;
 }
 
 function mapTask(row) {

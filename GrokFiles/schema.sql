@@ -21,7 +21,8 @@ CREATE TABLE IF NOT EXISTS tasks (
 
 CREATE TABLE IF NOT EXISTS entries (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE RESTRICT,
+    project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL,
+    project_name TEXT,
     task_id INTEGER REFERENCES tasks(id) ON DELETE SET NULL,
     task_name TEXT,
     start_utc TEXT NOT NULL,

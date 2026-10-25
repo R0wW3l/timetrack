@@ -222,6 +222,7 @@ th { color: var(--muted); font-weight: 550; font-size: 0.85rem; }
 }
 .chip-delete:hover { color: var(--danger); }
 .task-confirm { flex-basis: 100%; }
+.project-confirm:empty { display: none; }
 
 .check { display: flex; gap: 8px; align-items: center; }
 .check input { width: auto; accent-color: var(--accent); }
