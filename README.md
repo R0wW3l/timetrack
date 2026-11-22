@@ -7,57 +7,37 @@ A single-user time tracker that runs locally in Docker. It does not call the net
 
 ## Where your data lives
 
-The database, preferences, and running timer live in a folder on your computer, not in the image or the container. On a new install that folder is `timetrack-data` in your home directory (`~/timetrack-data`). Docker mounts it at `/data` inside the container, so you can delete, update, or rebuild the container without losing entries.
+Everything the app stores is in one folder: `timetrack.db`, `config.json`, and `active.json` when a timer is running. That folder is not inside the image. Docker mounts it at `/data`, so you can delete, update, or rebuild the container without losing entries.
 
-The folder you choose is saved in `~/.timetrack/settings.json`, which Compose mounts at `/settings`. That file is only the pointer. The database stays in the data folder.
+Point every computer at the same shared folder. The files do not record the computer's path, so each machine only needs its own mount:
 
-Open **Settings** and enter a full path:
+```bash
+docker run -d --name timetrack --restart unless-stopped \
+  -p 8080:8080 \
+  -v "/Users/rw/pCloud Drive/TimeTrack:/data" \
+  -e DATA_FOLDER=/data \
+  -e TZ=America/Edmonton \
+  rwel/timetrack:latest
+```
 
-- A folder that already contains `timetrack.db` is opened.
-- A path that does not exist yet, or an empty folder, is created and initialized.
-- A folder with other files and no Timetrack database asks before creating a new database beside those files. Nothing already in the folder is deleted, and entries in the previous folder stay there.
+On a computer where that shared folder has a different path, change the left side of `-v` and leave `/data` as it is. If the folder is missing or empty, the first start creates the database there. Files already in the folder are left in place.
 
-Stop a running timer before changing the folder.
-
-With Docker, the path has to be mounted into the container at that same path. A path that is only inside the container is deleted when the container is replaced.
-
-A cloud folder such as pCloud or Dropbox can hold the files, but one computer should use the database at a time. Syncing `timetrack.db` while Timetrack is open can corrupt it.
+One computer should use the database at a time. Syncing `timetrack.db` while Timetrack is open can corrupt it.
 
 ## Run it from Docker Hub
 
 ```bash
-mkdir -p "$HOME/timetrack-data" "$HOME/.timetrack"
 docker run -d --name timetrack --restart unless-stopped \
   -p 8080:8080 \
-  -v "$HOME/timetrack-data:/data" \
-  -v "$HOME/.timetrack:/settings" \
+  -v "/Users/rw/pCloud Drive/TimeTrack:/data" \
   -e DATA_FOLDER=/data \
-  -e SETTINGS_FOLDER=/settings \
   -e TZ=America/Edmonton \
   rwel/timetrack:latest
 ```
 
 Open [http://localhost:8080](http://localhost:8080).
 
-On Windows PowerShell, use `-v "$env:USERPROFILE\timetrack-data:/data"` and `-v "$env:USERPROFILE\.timetrack:/settings"`.
-
-Always pass the `-v` flags. Without the data volume, Docker keeps the database in an anonymous volume instead of your home folder.
-
-To choose a folder outside `timetrack-data`, mount its parent at the same path and then set the folder in Settings:
-
-```bash
-docker run -d --name timetrack --restart unless-stopped \
-  -p 8080:8080 \
-  -v "$HOME/timetrack-data:/data" \
-  -v "$HOME/.timetrack:/settings" \
-  -v "$HOME/Dropbox:$HOME/Dropbox" \
-  -e DATA_FOLDER=/data \
-  -e SETTINGS_FOLDER=/settings \
-  -e TZ=America/Edmonton \
-  rwel/timetrack:latest
-```
-
-Settings can then use a path such as `/Users/you/Dropbox/timetrack-data`.
+Always pass the `-v` flag. Without it, Docker keeps the database in an anonymous volume instead of the shared folder.
 
 To update to a newer version:
 
@@ -69,26 +49,20 @@ docker rm -f timetrack
 
 ## Run it with Compose
 
-[docker-compose.yml](docker-compose.yml) mounts `~/timetrack-data` and `~/.timetrack` by default. From this folder:
+[docker-compose.yml](docker-compose.yml) mounts `DATA_FOLDER` at `/data`. A `.env` file next to it can set that path, including a path with a space:
+
+```bash
+DATA_FOLDER=/Users/rw/pCloud Drive/TimeTrack
+```
+
+From this folder:
 
 ```bash
 docker compose up -d          # pulls rwel/timetrack:latest
 docker compose up -d --build  # builds from this source instead
 ```
 
-`DATA_MOUNT` is the directory Docker shares so Settings can use a path inside it. It defaults to the data folder. Point it at a parent such as Dropbox or pCloud Drive, then choose the folder in Settings. The Compose file quotes these paths, so a name with a space works:
-
-```bash
-export DATA_MOUNT="$HOME/pCloud Drive"
-docker compose up -d
-```
-
-To keep the default database somewhere else before the first launch, set `DATA_FOLDER` to that host path:
-
-```bash
-export DATA_FOLDER="$HOME/Dropbox/timetrack-data"
-docker compose up -d
-```
+With no `.env`, Compose uses `~/timetrack-data`.
 
 ## Using it for several jobs
 
@@ -112,7 +86,7 @@ SQLite is in WAL mode. Copying `timetrack.db` alone can miss the newest commits,
 Stop the container, checkpoint, then copy the database and the two JSON files:
 
 ```bash
-DATA_FOLDER="$HOME/timetrack-data"
+DATA_FOLDER="/Users/rw/pCloud Drive/TimeTrack"
 docker stop timetrack
 sqlite3 "$DATA_FOLDER/timetrack.db" "PRAGMA wal_checkpoint(TRUNCATE);"
 cp "$DATA_FOLDER/timetrack.db" "$DATA_FOLDER/timetrack-backup.db"
