@@ -59,7 +59,13 @@ function requireEntriesMode(count, mode, label) {
   }
 }
 
-function createRouter(db, dataFolder) {
+function createRouter(context) {
+  const db = new Proxy({}, {
+    get(_target, property) {
+      const value = context.db[property];
+      return typeof value === 'function' ? value.bind(context.db) : value;
+    },
+  });
   const router = express.Router();
 
   router.get('/projects', asyncRoute((req, res) => {
@@ -74,7 +80,7 @@ function createRouter(db, dataFolder) {
 
   router.post('/projects', asyncRoute((req, res) => {
     const name = requireName(req.body?.name, 'name');
-    const config = readConfig(dataFolder);
+    const config = readConfig(context.dataFolder);
     const wage = req.body?.hourlyWageCad == null
       ? config.defaults.defaultHourlyWageCad
       : requireWage(req.body.hourlyWageCad);
@@ -113,7 +119,7 @@ function createRouter(db, dataFolder) {
     const mode = parseEntriesMode(req.query.entries);
     const project = db.prepare('SELECT id, name FROM projects WHERE id = ?').get(id);
     if (!project) throw new HttpError(404, 'Project not found');
-    const active = readActive(dataFolder);
+    const active = readActive(context.dataFolder);
     if (active.isRunning && active.projectId === id) {
       throw new HttpError(409, 'Stop the running timer before deleting its project');
     }
@@ -166,7 +172,7 @@ function createRouter(db, dataFolder) {
     const mode = parseEntriesMode(req.query.entries);
     const task = db.prepare('SELECT id, name FROM tasks WHERE id = ?').get(id);
     if (!task) throw new HttpError(404, 'Task not found');
-    const active = readActive(dataFolder);
+    const active = readActive(context.dataFolder);
     if (active.isRunning && active.taskId === id) {
       throw new HttpError(409, 'Stop the running timer before deleting its task');
     }
@@ -201,11 +207,11 @@ function createRouter(db, dataFolder) {
   }));
 
   router.get('/timer', asyncRoute((req, res) => {
-    res.json(readActive(dataFolder));
+    res.json(readActive(context.dataFolder));
   }));
 
   router.post('/timer/start', asyncRoute((req, res) => {
-    if (readActive(dataFolder).isRunning) throw new HttpError(409, 'A timer is already running');
+    if (readActive(context.dataFolder).isRunning) throw new HttpError(409, 'A timer is already running');
     const { project, task } = assertProjectTask(db, req.body?.projectId, req.body?.taskId);
     const state = {
       isRunning: true,
@@ -217,23 +223,23 @@ function createRouter(db, dataFolder) {
       taskName: task.name,
       notesDraft: req.body?.notesDraft == null ? '' : String(req.body.notesDraft),
     };
-    writeActive(dataFolder, state);
+    writeActive(context.dataFolder, state);
     res.status(201).json(state);
   }));
 
   router.put('/timer', asyncRoute((req, res) => {
-    const active = readActive(dataFolder);
+    const active = readActive(context.dataFolder);
     if (!active.isRunning) throw new HttpError(409, 'No timer is running');
     if (!Object.prototype.hasOwnProperty.call(req.body || {}, 'notesDraft')) {
       throw new HttpError(400, 'notesDraft is required');
     }
     active.notesDraft = req.body.notesDraft == null ? '' : String(req.body.notesDraft);
-    writeActive(dataFolder, active);
+    writeActive(context.dataFolder, active);
     res.json(active);
   }));
 
   router.post('/timer/stop', asyncRoute((req, res) => {
-    const active = readActive(dataFolder);
+    const active = readActive(context.dataFolder);
     if (!active.isRunning) throw new HttpError(409, 'No timer is running');
     const startMs = Date.parse(active.startUtc);
     const finishMs = Math.max(Date.now(), startMs + 1000);
@@ -250,7 +256,7 @@ function createRouter(db, dataFolder) {
     const result = db.transaction(() => createEntry(db, payload, {
       treatAmountAsOverride: true,
     }))();
-    clearActive(dataFolder);
+    clearActive(context.dataFolder);
     res.json(result);
   }));
 
@@ -281,7 +287,7 @@ function createRouter(db, dataFolder) {
     const projectIds = parseIdList(req.body?.projectIds, 'projectIds');
     const taskIds = parseIdList(req.body?.taskIds, 'taskIds');
     const report = listEntries(db, from, to, { projectIds, taskIds });
-    const config = readConfig(dataFolder);
+    const config = readConfig(context.dataFolder);
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="timetrack-${from}_${to}.pdf"`);
     streamPdf(res, report, {
@@ -293,11 +299,19 @@ function createRouter(db, dataFolder) {
   }));
 
   router.get('/config', asyncRoute((req, res) => {
-    res.json(readConfig(dataFolder));
+    res.json(readConfig(context.dataFolder));
   }));
 
   router.put('/config', asyncRoute((req, res) => {
-    res.json(writeConfig(dataFolder, req.body));
+    res.json(writeConfig(context.dataFolder, req.body));
+  }));
+
+  router.get('/data-folder', asyncRoute((req, res) => {
+    res.json({ dataFolder: context.dataFolder });
+  }));
+
+  router.put('/data-folder', asyncRoute((req, res) => {
+    res.json(context.switchDataFolder(req.body?.dataFolder, req.body?.initialize === true));
   }));
 
   return router;

@@ -1,13 +1,13 @@
 {
   "name": "timetrack",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "private": true,
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node --test test/api.test.js test/functions.test.js test/features.test.js test/durability.test.js",
+    "test": "node --test test/api.test.js test/functions.test.js test/features.test.js test/durability.test.js test/dataFolder.test.js",
     "test:docker": "node --test test/docker-crash.test.js",
-    "test:all": "node --test test/api.test.js test/functions.test.js test/features.test.js test/durability.test.js test/docker-crash.test.js"
+    "test:all": "node --test test/api.test.js test/functions.test.js test/features.test.js test/durability.test.js test/dataFolder.test.js test/docker-crash.test.js"
   },
   "engines": {
     "node": ">=20"

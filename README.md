@@ -7,24 +7,57 @@ A single-user time tracker that runs locally in Docker. It does not call the net
 
 ## Where your data lives
 
-The database, config, and running timer live in a folder on your computer, not in the image or the container. By default that folder is `timetrack-data` in your home directory (`~/timetrack-data`). Docker mounts it at `/data` inside the container, so you can delete, update, or rebuild the container without losing anything.
+The database, preferences, and running timer live in a folder on your computer, not in the image or the container. On a new install that folder is `timetrack-data` in your home directory (`~/timetrack-data`). Docker mounts it at `/data` inside the container, so you can delete, update, or rebuild the container without losing entries.
+
+The folder you choose is saved in `~/.timetrack/settings.json`, which Compose mounts at `/settings`. That file is only the pointer. The database stays in the data folder.
+
+Open **Settings** and enter a full path:
+
+- A folder that already contains `timetrack.db` is opened.
+- A path that does not exist yet, or an empty folder, is created and initialized.
+- A folder with other files and no Timetrack database asks before creating a new database beside those files. Nothing already in the folder is deleted, and entries in the previous folder stay there.
+
+Stop a running timer before changing the folder.
+
+With Docker, the path has to be mounted into the container at that same path. A path that is only inside the container is deleted when the container is replaced.
+
+A cloud folder such as pCloud or Dropbox can hold the files, but one computer should use the database at a time. Syncing `timetrack.db` while Timetrack is open can corrupt it.
 
 ## Run it from Docker Hub
 
 ```bash
-mkdir -p "$HOME/timetrack-data"
+mkdir -p "$HOME/timetrack-data" "$HOME/.timetrack"
 docker run -d --name timetrack --restart unless-stopped \
   -p 8080:8080 \
   -v "$HOME/timetrack-data:/data" \
+  -v "$HOME/.timetrack:/settings" \
+  -e DATA_FOLDER=/data \
+  -e SETTINGS_FOLDER=/settings \
   -e TZ=America/Edmonton \
   rwel/timetrack:latest
 ```
 
 Open [http://localhost:8080](http://localhost:8080).
 
-On Windows PowerShell, use `-v "$env:USERPROFILE\timetrack-data:/data"`.
+On Windows PowerShell, use `-v "$env:USERPROFILE\timetrack-data:/data"` and `-v "$env:USERPROFILE\.timetrack:/settings"`.
 
-Always pass the `-v` flag. Without it, Docker keeps the data in an anonymous volume instead of your home folder.
+Always pass the `-v` flags. Without the data volume, Docker keeps the database in an anonymous volume instead of your home folder.
+
+To choose a folder outside `timetrack-data`, mount its parent at the same path and then set the folder in Settings:
+
+```bash
+docker run -d --name timetrack --restart unless-stopped \
+  -p 8080:8080 \
+  -v "$HOME/timetrack-data:/data" \
+  -v "$HOME/.timetrack:/settings" \
+  -v "$HOME/Dropbox:$HOME/Dropbox" \
+  -e DATA_FOLDER=/data \
+  -e SETTINGS_FOLDER=/settings \
+  -e TZ=America/Edmonton \
+  rwel/timetrack:latest
+```
+
+Settings can then use a path such as `/Users/you/Dropbox/timetrack-data`.
 
 To update to a newer version:
 
@@ -36,14 +69,21 @@ docker rm -f timetrack
 
 ## Run it with Compose
 
-[docker-compose.yml](docker-compose.yml) mounts `~/timetrack-data` by default. From this folder:
+[docker-compose.yml](docker-compose.yml) mounts `~/timetrack-data` and `~/.timetrack` by default. From this folder:
 
 ```bash
 docker compose up -d          # pulls rwel/timetrack:latest
 docker compose up -d --build  # builds from this source instead
 ```
 
-To keep the data somewhere else, set `DATA_FOLDER` to the host path first:
+`DATA_MOUNT` is the directory Docker shares so Settings can use a path inside it. It defaults to the data folder. Point it at a parent such as Dropbox or pCloud Drive, then choose the folder in Settings:
+
+```bash
+export DATA_MOUNT="$HOME/Dropbox"
+docker compose up -d
+```
+
+To keep the default database somewhere else before the first launch, set `DATA_FOLDER` to that host path:
 
 ```bash
 export DATA_FOLDER="$HOME/Dropbox/timetrack-data"

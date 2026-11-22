@@ -67,6 +67,18 @@ POST   /reports/pdf              -> { from: ISO_DATE, to: ISO_DATE }
 ## Config
 GET    /config                   -> current config.json contents
 PUT    /config                   -> update config.json (atomic temp-file write, same pattern as active.json)
+                                 -> dataFolder in the body is ignored; the file stays in the active data folder
+
+## Data folder
+GET    /data-folder              -> { dataFolder } the folder the server is using now
+PUT    /data-folder              -> { dataFolder, initialize? }
+                                 -> opens that folder when it already contains timetrack.db
+                                 -> creates the folder, config.json, and timetrack.db when it is missing or empty
+                                 -> 409 { error, code: "initialize" } when the folder has other files and no database;
+                                    repeat with initialize: true to create a database beside those files
+                                 -> 409 while a timer is running
+                                 -> 400 for a relative path, or when Docker cannot see the folder because it is not mounted
+                                 -> saves the chosen path in the app settings folder so the next start uses it
 
 # Notes for implementation
 - All *_utc fields are ISO 8601 strings in UTC. tzOffsetMinutes stores the client's offset

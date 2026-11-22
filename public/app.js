@@ -9,6 +9,7 @@ const state = {
   error: '',
   editing: null,
   showEntryForm: false,
+  dataFolderPrompt: null,
   range: monthRange(),
   allTasks: [],
   filters: { projectIds: [], taskIds: [] },
@@ -62,6 +63,7 @@ document.addEventListener('submit', async (event) => {
     else if (form.id === 'range-form') await loadEntries();
     else if (form.id === 'report-form') await downloadPdf(form);
     else if (form.id === 'config-form') await saveConfig(form);
+    else if (form.id === 'data-folder-form') await saveDataFolder(form);
     else if (form.id === 'project-form') await createProject(form);
     else if (form.id === 'task-form') await createTask(form);
   } catch (error) {
@@ -114,6 +116,11 @@ document.addEventListener('click', async (event) => {
       state.pendingProjectDelete = null;
       refreshProjectConfirm(projectId);
     } else if (action === 'clear-filter') await clearFilter(button.dataset.kind);
+    else if (action === 'confirm-data-folder') await saveDataFolder(document.getElementById('data-folder-form'), true);
+    else if (action === 'cancel-data-folder') {
+      state.dataFolderPrompt = null;
+      render();
+    }
   } catch (error) {
     state.error = error.message;
     render();
@@ -298,10 +305,31 @@ function renderReport() {
 
 function renderSettings() {
   const config = state.config;
+  const folderValue = state.dataFolderPrompt || config.dataFolder;
+  const prompt = state.dataFolderPrompt
+    ? `
+      <div class="banner stack">
+        <span>${esc(state.dataFolderPrompt)} has other files and no Timetrack database. Create a new empty database there? Files already in the folder stay, and entries in the current folder stay where they are.</span>
+        <div class="row">
+          <button type="button" data-action="confirm-data-folder">Create a new database here</button>
+          <button type="button" class="ghost" data-action="cancel-data-folder">Cancel</button>
+        </div>
+      </div>
+    `
+    : '';
   return `
     <h1>Settings</h1>
-    <p class="lede">Wage, appearance, projects, and tasks stay on this machine.</p>
+    <p class="lede">Wage, appearance, projects, and tasks stay in the data folder.</p>
     ${alertHtml()}
+    <section class="card stack">
+      <h2>Data folder</h2>
+      <p class="muted">The database, preferences, and running timer are stored in this folder. Choose a folder that already contains a Timetrack database, or a new path and Timetrack will create one. With Docker, mount the folder into the container at this same path.</p>
+      <form id="data-folder-form" class="stack">
+        <label><span>Folder path</span><input name="dataFolder" value="${esc(folderValue)}" required spellcheck="false" autocomplete="off"></label>
+        ${prompt}
+        <div class="row"><button type="submit">Save data folder</button></div>
+      </form>
+    </section>
     <section class="card stack">
       <form id="config-form" class="row">
         <label class="grow"><span>Default hourly wage (CAD)</span><input name="defaultHourlyWageCad" type="number" min="0" step="0.01" value="${config.defaults.defaultHourlyWageCad}" required></label>
@@ -727,6 +755,37 @@ async function downloadPdf(form) {
   render();
 }
 
+async function saveDataFolder(form, initialize = false) {
+  const typed = String(new FormData(form).get('dataFolder') || '');
+  const dataFolder = initialize && state.dataFolderPrompt ? state.dataFolderPrompt : typed;
+  let result;
+  try {
+    result = await api('/data-folder', { method: 'PUT', body: { dataFolder, initialize } });
+  } catch (error) {
+    if (error.code === 'initialize') {
+      state.dataFolderPrompt = dataFolder.trim();
+      state.error = '';
+      state.notice = '';
+      render();
+      return;
+    }
+    throw error;
+  }
+  state.dataFolderPrompt = null;
+  state.notice = result.initialized
+    ? `New database created in ${result.dataFolder}. Entries already stored in another folder were left there.`
+    : `Using the Timetrack data in ${result.dataFolder}.`;
+  state.projects = [];
+  state.taskCache = {};
+  state.entries = null;
+  state.allTasks = [];
+  state.filters = { projectIds: [], taskIds: [] };
+  state.timer = { isRunning: false };
+  state.pendingTaskDelete = null;
+  state.pendingProjectDelete = null;
+  await boot();
+}
+
 async function saveConfig(form) {
   const data = Object.fromEntries(new FormData(form));
   const next = {
@@ -904,7 +963,11 @@ async function api(path, options = {}) {
   });
   if (response.status === 204) return null;
   const data = await response.json().catch(() => null);
-  if (!response.ok) throw new Error(data?.error || response.statusText);
+  if (!response.ok) {
+    const error = new Error(data?.error || response.statusText);
+    error.code = data?.code;
+    throw error;
+  }
   return data;
 }
 

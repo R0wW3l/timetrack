@@ -7,8 +7,11 @@ services:
     ports:
       - "8080:8080"
     volumes:
+      - ${SETTINGS_FOLDER:-${HOME}/.timetrack}:/settings
       - ${DATA_FOLDER:-${HOME}/timetrack-data}:/data
+      - ${DATA_MOUNT:-${DATA_FOLDER:-${HOME}/timetrack-data}}:${DATA_MOUNT:-${DATA_FOLDER:-${HOME}/timetrack-data}}
     environment:
+      - SETTINGS_FOLDER=/settings
       - DATA_FOLDER=/data
       - PORT=8080
       - TZ=America/Edmonton
