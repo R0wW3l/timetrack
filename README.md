@@ -76,10 +76,10 @@ docker compose up -d          # pulls rwel/timetrack:latest
 docker compose up -d --build  # builds from this source instead
 ```
 
-`DATA_MOUNT` is the directory Docker shares so Settings can use a path inside it. It defaults to the data folder. Point it at a parent such as Dropbox or pCloud Drive, then choose the folder in Settings:
+`DATA_MOUNT` is the directory Docker shares so Settings can use a path inside it. It defaults to the data folder. Point it at a parent such as Dropbox or pCloud Drive, then choose the folder in Settings. The Compose file quotes these paths, so a name with a space works:
 
 ```bash
-export DATA_MOUNT="$HOME/Dropbox"
+export DATA_MOUNT="$HOME/pCloud Drive"
 docker compose up -d
 ```
 
