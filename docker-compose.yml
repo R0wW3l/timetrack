@@ -8,16 +8,9 @@ services:
       - "8080:8080"
     volumes:
       - type: bind
-        source: "${SETTINGS_FOLDER:-${HOME}/.timetrack}"
-        target: /settings
-      - type: bind
         source: "${DATA_FOLDER:-${HOME}/timetrack-data}"
         target: /data
-      - type: bind
-        source: "${DATA_MOUNT:-${DATA_FOLDER:-${HOME}/timetrack-data}}"
-        target: "${DATA_MOUNT:-${DATA_FOLDER:-${HOME}/timetrack-data}}"
     environment:
-      - SETTINGS_FOLDER=/settings
       - DATA_FOLDER=/data
       - PORT=8080
       - TZ=America/Edmonton

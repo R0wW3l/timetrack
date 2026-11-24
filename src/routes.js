@@ -306,14 +306,6 @@ function createRouter(context) {
     res.json(writeConfig(context.dataFolder, req.body));
   }));
 
-  router.get('/data-folder', asyncRoute((req, res) => {
-    res.json({ dataFolder: context.dataFolder });
-  }));
-
-  router.put('/data-folder', asyncRoute((req, res) => {
-    res.json(context.switchDataFolder(req.body?.dataFolder, req.body?.initialize === true));
-  }));
-
   return router;
 }
 

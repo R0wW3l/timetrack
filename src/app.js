@@ -1,3 +1,4 @@
+const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const express = require('express');
@@ -5,17 +6,18 @@ const { openDatabase } = require('./db');
 const { seedConfig, readConfig } = require('./configStore');
 const { readActive } = require('./activeTimer');
 const { createRouter } = require('./routes');
-const { resolveStartupFolder, prepareStartupFolder, switchDataFolder } = require('./dataFolder');
 const { HttpError } = require('./httpError');
 
-function createApp(dataFolder, options = {}) {
+function resolveDataFolder(env = process.env, homedir = os.homedir()) {
+  const requested = env.DATA_FOLDER || path.join(homedir, 'timetrack-data');
+  return path.resolve(requested);
+}
+
+function createApp(dataFolder) {
   const context = {
     db: null,
     dataFolder,
-    settingsFolder: options.settingsFolder || null,
-    visibility: options.visibility || null,
   };
-  context.switchDataFolder = (requested, initialize) => switchDataFolder(context, requested, initialize);
   seedConfig(dataFolder);
   context.db = openDatabase(dataFolder);
   const active = readActive(dataFolder);
@@ -44,12 +46,17 @@ function createApp(dataFolder, options = {}) {
     res.status(404).json({ error: 'Not found' });
   });
   const publicDir = path.join(__dirname, '..', 'public');
-  app.use(express.static(publicDir));
+  app.use(express.static(publicDir, {
+    setHeaders(res) {
+      res.setHeader('Cache-Control', 'no-cache');
+    },
+  }));
   app.use((req, res, next) => {
     if (req.method !== 'GET') {
       next();
       return;
     }
+    res.setHeader('Cache-Control', 'no-cache');
     res.sendFile(path.join(publicDir, 'index.html'));
   });
   app.use((error, req, res, next) => {
@@ -74,23 +81,15 @@ function createApp(dataFolder, options = {}) {
 }
 
 function start() {
-  let dataFolder;
-  let settingsFolder;
-  try {
-    const chosen = resolveStartupFolder(process.env, os.homedir());
-    dataFolder = prepareStartupFolder(chosen.dataFolder);
-    settingsFolder = chosen.settingsFolder;
-  } catch (error) {
-    console.error(error.message);
-    process.exit(1);
-  }
+  const dataFolder = resolveDataFolder();
+  fs.mkdirSync(dataFolder, { recursive: true });
   const config = readConfig(dataFolder);
   const port = Number(process.env.PORT || config.server.port || 8080);
-  const app = createApp(dataFolder, { settingsFolder });
+  const app = createApp(dataFolder);
   app.listen(port, '0.0.0.0', () => {
     console.log(`Timetrack listening on http://localhost:${port}`);
     console.log(`Data folder: ${dataFolder}`);
   });
 }
 
-module.exports = { createApp, start };
+module.exports = { createApp, start, resolveDataFolder };
